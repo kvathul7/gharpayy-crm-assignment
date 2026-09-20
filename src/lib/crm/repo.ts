@@ -146,10 +146,19 @@ export async function appendEvent(e: NewEvent): Promise<WriteResult> {
   }
 }
 
+/**
+ * Append many events.
+ *
+ * Uses upsert + ignoreDuplicates against the natural key
+ * (customer_id, at, actor, label, detail) enforced by
+ * crm_events_natural_key_idx. A re-sent event is silently skipped by the
+ * database rather than duplicating the trail — which is what kept happening
+ * while duplicate protection lived only in client memory.
+ */
 export async function appendEvents(events: NewEvent[]): Promise<WriteResult> {
   if (events.length === 0) return { ok: true };
   try {
-    const { error } = await db.from("crm_events").insert(
+    const { error } = await db.from("crm_events").upsert(
       events.map((e) => ({
         customer_id: e.customerId,
         at: e.at ?? nowIso(),
@@ -160,6 +169,7 @@ export async function appendEvents(events: NewEvent[]): Promise<WriteResult> {
         module: e.module ?? null,
         changes: e.changes ?? [],
       })),
+      { onConflict: "customer_id,at,actor,label,detail", ignoreDuplicates: true },
     );
     if (error) throw error;
     return { ok: true };
