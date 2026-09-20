@@ -140,6 +140,22 @@ export function ScreenPanel({
     saveAndNext();
   }
 
+  // chooseOption closes over draft state and is rebuilt every render, so the
+  // key handler reads it through a ref instead of re-subscribing each time.
+  const chooseRef = useRef(chooseOption);
+  chooseRef.current = chooseOption;
+
+  // The screen answers multiple-choice questions with the number keys.
+  // Every choice used to cost a mouse click even though the operator's
+  // hands were already on the keyboard for the typed answers; a five
+  // question screen was five clicks that Enter alone could not remove.
+  // 1-9 picks an option on the first question still unanswered, so a whole
+  // screen can be completed without reaching for the mouse.
+  const activeChoice = useMemo(
+    () => screen.steps.find((st) => st.kind === "CHOICE" && !val(st.field)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [screen, draft, lead.f],
+  );
   // Keyboard on the whole screen: Enter or Ctrl/Cmd+Enter moves on, arrows walk screens.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -155,12 +171,20 @@ export function ScreenPanel({
         saveAndNext();
         return;
       }
+      if (!typing && /^[1-9]$/.test(e.key) && activeChoice?.options?.length) {
+        const pick = activeChoice.options[Number(e.key) - 1];
+        if (pick) {
+          e.preventDefault();
+          chooseRef.current(activeChoice, pick.value);
+          return;
+        }
+      }
       if (!typing && (e.key === "ArrowRight" || e.key === "PageDown")) { e.preventDefault(); saveAndNext(); }
       if (!typing && (e.key === "ArrowLeft" || e.key === "PageUp")) { e.preventDefault(); if (canPrev) onPrev?.(); }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [saveAndNext, canPrev, onPrev]);
+  }, [saveAndNext, canPrev, onPrev, activeChoice]);
 
   const nav = (
     <div className="flex items-center gap-1.5">
@@ -204,7 +228,7 @@ export function ScreenPanel({
 
                 {st.kind === "CHOICE" ? (
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {st.options?.map((o) => (
+                    {st.options?.map((o, oi) => (
                       <button
                         key={o.value}
                         type="button"
@@ -216,6 +240,9 @@ export function ScreenPanel({
                           o.effect && "border-destructive/50",
                         )}
                       >
+                        {st.key === activeChoice?.key && oi < 9 && (
+                          <span className="mr-1 font-mono text-[9px] opacity-60">{oi + 1}</span>
+                        )}
                         {o.label}{o.effect === "ESCALATE" ? " → Tower" : o.effect === "CLOSE" ? " → closes" : ""}
                       </button>
                     ))}
@@ -277,7 +304,7 @@ export function ScreenPanel({
             <Button size="sm" variant="ghost" onClick={() => setDraft({})} disabled={Object.keys(draft).length === 0}>Clear my edits</Button>
             {nav}
             <span className="text-[11px] text-muted-foreground">
-              Keyboard: <b>Enter</b> saves and jumps to the next box, <b>Enter</b> on the last box moves to the next screen.
+              Keyboard: <b>1</b>–<b>9</b> answers the highlighted question, <b>Enter</b> saves and jumps to the next box, <b>Enter</b> on the last box moves to the next screen.
               <b> Ctrl/⌘+Enter</b> jumps ahead any time, <b>←</b> and <b>→</b> walk the screens.
             </span>
           </div>
