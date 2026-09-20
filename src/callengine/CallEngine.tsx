@@ -16,6 +16,7 @@ import { knownFacts, noAnswerPlan, suggestAgenda } from "./infer";
 import { callMission } from "./mission";
 import { useCallEngine } from "./store";
 import { pushCallRecord } from "./sync";
+import { syncCall } from "@/lib/crm/call-sync";
 import {
   ACTIVITIES, AGENDAS, DISLIKE_REASONS, MOVEMENT_LABEL, OUTCOMES, PRICE_REACTIONS, PROMISES, REACTIONS,
   TOUR_REFUSALS, agendaDef, emptyCapture,
@@ -57,6 +58,7 @@ export function CallEngine({ lead, onLogged }: Props) {
   const [outputs, setOutputs] = useState<CallOutputs | null>(null);
   const [nowText, setNowText] = useState("");
   const [followText, setFollowText] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const facts = useMemo(() => knownFacts(lead), [lead]);
   const def = agendaDef(agenda);
@@ -95,7 +97,7 @@ export function CallEngine({ lead, onLogged }: Props) {
     setPhase("outputs");
   }
 
-  function commit() {
+  async function commit() {
     if (!outputs) return;
     const durationSec = startedAt ? Math.round((Date.now() - startedAt) / 1000) : undefined;
     const waste = wasteFlags(lead, cap, outputs.movement);
@@ -153,11 +155,30 @@ export function CallEngine({ lead, onLogged }: Props) {
     } as CallRecord;
 
     engine.save(record);
-    void pushCallRecord(record).then((res) => {
-      if (!res.ok) toast.warning(`Saved on this device — not synced yet: ${res.error}`);
-    });
 
-    toast.success(`${def.label} logged · ${MOVEMENT_LABEL[outputs.movement]} · next: ${outputs.nextStep.label}`);
+    // The local writes above keep the operator moving. The server is the
+    // source of shared truth, so what this toast claims is decided by what
+    // the SERVER accepted — never by the fact that localStorage succeeded.
+    setSaving(true);
+    const [callPush, sync] = await Promise.all([pushCallRecord(record), syncCall(lead, record)]);
+    setSaving(false);
+
+    const serverOk = callPush.ok && sync.ok;
+    const problems = [...(callPush.ok ? [] : [`call record: ${callPush.error}`]), ...sync.errors];
+
+    if (serverOk) {
+      toast.success(`${def.label} saved to the server · next: ${outputs.nextStep.label}`, {
+        description:
+          sync.handoff.created && sync.handoff.dueAt
+            ? `Handed to Closing Desk — ${sync.handoff.owner} must close by ${new Date(sync.handoff.dueAt).toLocaleString()}`
+            : `Customer ${sync.customerId} updated · ${MOVEMENT_LABEL[outputs.movement]}`,
+      });
+    } else {
+      toast.error("NOT saved to the server — this call is only on this device", {
+        description: problems.join(" · ").slice(0, 300) || "The backend rejected the write.",
+        duration: 12000,
+      });
+    }
     setPhase("mission");
     setCap(emptyCapture());
     setOutputs(null);
@@ -170,6 +191,11 @@ export function CallEngine({ lead, onLogged }: Props) {
     toast.success("Copied — paste into WhatsApp");
   }
 
+  // Requirement: every item carries an owner and a deadline, and what is
+  // late is red on this screen — not in a report somewhere else.
+  const ownerName = lead.nextAction?.ownerName || lead.primaryOwnerName || "";
+  const nextOverdue = !!lead.nextAction && new Date(lead.nextAction.dueAt).getTime() < Date.now();
+
   return (
     <div className="space-y-3 rounded-lg border p-3">
       {/* Fixed header — the lead's details stay visible for the whole call, never scroll away. */}
@@ -178,13 +204,31 @@ export function CallEngine({ lead, onLogged }: Props) {
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold">{lead.name ?? "Customer"}</div>
             <div className="text-[10px] text-muted-foreground">M-POWER CALL · {def.label}</div>
+            <div className="text-[10px] text-muted-foreground">
+              Outcome: this customer ends the call with a written message, an armed follow-up and a dated next step.
+            </div>
           </div>
-          {lead.nextAction && (
-            <Badge variant="outline" className="shrink-0 text-[10px]">
-              next: {NEXT_ACTION_LABEL[lead.nextAction.kind]} ·{" "}
-              {new Date(lead.nextAction.dueAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          <div className="flex max-w-[45%] shrink-0 flex-col items-end gap-1 text-right">
+            <Badge variant={ownerName ? "outline" : "destructive"} className="max-w-full whitespace-normal text-[10px] leading-tight">
+              {ownerName ? `owner: ${ownerName}` : "no owner"}
             </Badge>
-          )}
+            {lead.nextAction ? (
+              <Badge variant={nextOverdue ? "destructive" : "outline"} className="max-w-full whitespace-normal text-[10px] leading-tight">
+                {nextOverdue ? "OVERDUE · " : "next: "}
+                {NEXT_ACTION_LABEL[lead.nextAction.kind]} ·{" "}
+                {new Date(lead.nextAction.dueAt).toLocaleString([], {
+                  day: "2-digit",
+                  month: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </Badge>
+            ) : (
+              <Badge variant="destructive" className="text-[10px]">
+                no deadline set
+              </Badge>
+            )}
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
           {facts.map((f) => (
@@ -504,7 +548,9 @@ export function CallEngine({ lead, onLogged }: Props) {
 
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => setPhase("capture")}>Back</Button>
-            <Button className="flex-1" size="sm" onClick={commit}>Send, arm follow-up and set next step</Button>
+            <Button className="flex-1" size="sm" onClick={commit} disabled={saving}>
+            {saving ? "Saving to the server…" : "Send, arm follow-up and set next step"}
+          </Button>
           </div>
         </>
       )}

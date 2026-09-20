@@ -23,6 +23,10 @@ import { ClosingDesk } from "./ClosingDesk";
 import { ContactActions } from "@/components/common/ContactActions";
 import { CloseCommitButton } from "@/components/commitments/CloseCommitButton";
 import { canonicalCustomerId } from "@/lib/canonical/customer-id";
+import { useFlowBackend } from "@/lib/crm/useFlowBackend";
+import { BackendBadge } from "@/components/common/BackendBadge";
+import { useWorkClaim } from "@/lib/crm/useWorkClaim";
+import { WorkClaimBar } from "@/components/common/WorkClaimBar";
 
 type Pane = "WORK" | "CAPTURED" | "MATCH" | "LABELS" | "CLOSING" | "QUEUE" | "DRAFTS";
 
@@ -69,7 +73,24 @@ export interface SplitFocus { name?: string; phone?: string; key?: string; canon
 
 export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embedded?: boolean; focus?: SplitFocus; panelOnly?: boolean }) {
   const { leads, me, mode, setMode, claim, setNext, logActivity, escalate, batches, buildBatch, closeBatch, reopenBatch } = useBookingFlow();
+  // Booking Flow Split and Closing Desk share this store, so this one call
+  // puts both modules on the hosted backend.
+  const backend = useFlowBackend("split");
   const [widthPct, setWidthPct] = useState(40);
+
+  // The split screen assumes two columns: the CRM beside WhatsApp Web. On a
+  // phone there is no second column to give away — 40% of 390px is a 156px
+  // panel next to a placeholder telling you to open WhatsApp Web, which you
+  // cannot do on a phone anyway. Below the md breakpoint the panel simply
+  // takes the whole screen. Desktop behaviour is untouched.
+  const [isNarrow, setIsNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const apply = () => setIsNarrow(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
   const [dragging, setDragging] = useState(false);
   const [closeNote, setCloseNote] = useState("");
   const [closingId, setClosingId] = useState<string | null>(null);
@@ -114,6 +135,12 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
   }, [leads, mounted]);
 
   const lead = leads.find((l) => l.id === leadId) ?? queue[0];
+
+  // NEW IDEA 2 — the server decides who is on this customer.
+  const claimCustomerId = lead
+    ? lead.canonicalId || canonicalCustomerId({ phone: lead.phone, name: lead.name }) || null
+    : null;
+  const workClaim = useWorkClaim(claimCustomerId, me, "split");
 
   useEffect(() => {
     if (lead) setScreenId(currentScreen(lead.f ?? {}).id);
@@ -170,7 +197,7 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
 
   return (
     <div className={cn("flex w-full overflow-hidden", panelOnly ? "h-full" : embedded ? "h-[calc(100vh-10rem)]" : "h-screen")}>
-    <div className="flex min-w-0 flex-col overflow-hidden bg-background" style={{ width: panelOnly ? "100%" : `${widthPct}%` }}>
+    <div className="flex min-w-0 flex-col overflow-hidden bg-background" style={{ width: panelOnly || isNarrow ? "100%" : `${widthPct}%` }}>
       {/* Result header — never scrolls away */}
       <header className="shrink-0 border-b px-2 py-1">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
@@ -185,7 +212,7 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {!panelOnly && (
+            {!panelOnly && !isNarrow && (
               <div className="flex items-center gap-0.5 rounded-md border px-1 py-0.5">
                 <span className="text-[9px] text-muted-foreground">W</span>
                 {WIDTH_PRESETS.map((p) => (
@@ -224,6 +251,19 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
             </div>
           </div>
         </div>
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+          <p className="min-w-0 flex-1 truncate text-[9px] leading-tight text-muted-foreground">
+            Outcome: every customer leaves this screen with a named owner and a dated next step.
+          </p>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {stats.left > 0 && (
+              <Badge variant="destructive" className="px-1 text-[9px]" title="Customers with no owner, no next step or no deadline. Every item must carry both.">
+                {stats.left} unowned/undated
+              </Badge>
+            )}
+            <BackendBadge state={backend} />
+          </div>
+        </div>
       </header>
 
       {/* Customer line + the five answers, compact */}
@@ -244,6 +284,7 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
               <Badge variant={lead.owner ? "secondary" : "destructive"} className="text-[10px]">{lead.owner ?? "no owner"}</Badge>
               <Badge variant="outline" className="text-[10px]">waiting on {h.waitingOn}</Badge>
               <Badge variant={lead.nextAction ? "outline" : "destructive"} className="text-[10px]">{lead.nextAction ?? "no next step"}</Badge>
+              <WorkClaimBar claim={workClaim} compact />
               <Badge variant={lead.nextActionAt && h.sla !== "LATE" ? "outline" : "destructive"} className="text-[10px]">
                 {lead.nextActionAt ? (h.sla === "LATE" ? `late ${fmtMins(h.minutesLate)}` : new Date(lead.nextActionAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })) : "no deadline"}
               </Badge>
@@ -479,7 +520,7 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
 
 
       {/* Drag this edge to set the panel width, exactly like a sheet column */}
-      {!panelOnly && widthPct < 100 && (
+      {!panelOnly && !isNarrow && widthPct < 100 && (
         <>
           <div
             role="separator"

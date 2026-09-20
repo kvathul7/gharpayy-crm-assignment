@@ -11,6 +11,8 @@ import { HowButton } from "@/components/common/HowButton";
 import { CLOSE_WINDOWS, WINDOW_BY_ID, TONE_STYLE, CLOSE_STEPS, type CloseWindowId } from "@/lib/commitments/windows";
 import { promiseStrength, riskFlags } from "@/lib/commitments/insights";
 import { NotClosedDialog } from "./NotClosedDialog";
+import { suggestPromise } from "@/lib/commitments/suggest";
+import { useBookingFlow } from "@/bookingflow/store";
 import {
   useCommitments, openCommitmentFor, commitmentsFor, promiseClose, markKept,
   hoursLeft, isExpired, dueFromWindow,
@@ -59,6 +61,19 @@ export function CloseCommitButton({ leadId, leadName, leadPhone = "", actorName 
   const [timeOfDay, setTimeOfDay] = useState("");
   const [steps, setSteps] = useState<string[]>(live?.steps ?? []);
   const [note, setNote] = useState("");
+
+  // Where the customer actually stands decides the sensible promise. Opening
+  // the dialog pre-answers the hour, the deadline and the first move, so a
+  // routine promise costs one confirm instead of four decisions.
+  const stage = useBookingFlow((st) => st.leads.find((l) => l.id === leadId || l.canonicalId === leadId)?.stage);
+  const suggestion = useMemo(() => suggestPromise(stage), [stage]);
+  useEffect(() => {
+    if (!open || live) return; // editing a live promise keeps its own values
+    setWindowId(suggestion.windowId);
+    setTimeOfDay(suggestion.timeOfDay);
+    setSteps(suggestion.steps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const def = WINDOW_BY_ID[windowId];
   const isChange = !!live;
@@ -131,8 +146,10 @@ export function CloseCommitButton({ leadId, leadName, leadPhone = "", actorName 
               {isChange ? "Move the close promise" : "Definitely Close"} — {leadName}
             </DialogTitle>
             <DialogDescription className="text-[11px] leading-relaxed">
-              Four decisions: the hour, the deadline, the moves you will make, and a note if you want one.
-              Stored with your name so the morning review can check it.
+              {isChange
+                ? "Move the deadline and say why. The old one stays in the history."
+                : `Pre-filled because ${suggestion.because}. Change anything, then commit — ${"⌘"}/Ctrl+Enter commits.`}
+              {" "}Stored with your name so the morning review can check it.
             </DialogDescription>
           </DialogHeader>
 

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import type {
   ActivityLog, FollowUp, Lead, Property, Role, TCM, Tour,
   PostTourUpdate, ClientDecision, LeadStage, Intent,
@@ -66,7 +67,7 @@ interface AppState {
   closeDeal: (input: { leadId: string; tourId: string; propertyId: string; tcmId: string; amount: number }) => void;
 }
 
-export const useApp = create<AppState>((set, get) => ({
+export const useApp = create<AppState>()(persist((set, get) => ({
   role: "flow-ops",
   currentTcmId: "tcm-1",
   setRole: (r) => set({ role: r }),
@@ -464,6 +465,19 @@ export const useApp = create<AppState>((set, get) => ({
         : undefined,
     });
   },
+}), {
+  // /leads previously kept state in memory only, so every edit died on refresh.
+  // skipHydration + an explicit rehydrate in AppShell keeps the first client
+  // render identical to the server render, so nothing mismatches on hydrate.
+  name: "gharpayy.app.v1",
+  version: 1,
+  skipHydration: true,
+  partialize: (s) => ({
+    role: s.role, currentTcmId: s.currentTcmId, selectedLeadId: s.selectedLeadId,
+    tcms: s.tcms, properties: s.properties, leads: s.leads, tours: s.tours,
+    activities: s.activities, followUps: s.followUps, handoffs: s.handoffs,
+    sequences: s.sequences, bookings: s.bookings,
+  }),
 }));
 
 function pushActivity(

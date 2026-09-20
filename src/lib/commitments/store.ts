@@ -25,6 +25,8 @@ export interface CommitmentEvent {
 
 export interface CloseCommitment {
   id: string;
+  /** The crm_commitments uuid, when this promise came from (or went to) the server. */
+  serverId?: string;
   leadId: string;
   leadName: string;
   leadPhone: string;
@@ -219,6 +221,25 @@ export const cancelCommitment = (id: string, by: string, reason: string) => sett
 export function addCommitmentNote(id: string, by: string, note: string) {
   const now = new Date().toISOString();
   write(read().map((c) => (c.id === id ? { ...c, history: [{ at: now, by, kind: "note", note }, ...c.history] } : c)));
+}
+
+/**
+ * Bring promises that exist on the server into the local board.
+ *
+ * Needed because Closing Desk renders from this synchronous store, while
+ * the call -> closing handoff creates its promise directly on the server.
+ * Without this the handoff would be invisible on the very board it targets.
+ *
+ * Local state always wins: a promise already known here is left alone.
+ */
+export function importCommitments(incoming: CloseCommitment[]): number {
+  if (incoming.length === 0) return 0;
+  const all = read();
+  const known = new Set(all.map((c) => c.serverId ?? c.id));
+  const fresh = incoming.filter((c) => !known.has(c.serverId ?? c.id));
+  if (fresh.length === 0) return 0;
+  write([...fresh, ...all]);
+  return fresh.length;
 }
 
 export function isExpired(c: CloseCommitment, now = Date.now()) {

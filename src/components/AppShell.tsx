@@ -38,6 +38,10 @@ type NavItem = { to: string; label: string; icon: typeof Target; badge?: number;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { role, setRole, currentTcmId, setCurrentTcmId, tcms, leads, tours, followUps, handoffs, bookings } = useApp();
+  // useApp persists with skipHydration so the server and first client render
+  // match. Rehydrate once mounted, which is what makes /leads survive refresh.
+  useEffect(() => { void useApp.persist.rehydrate(); }, []);
+
   const router = useRouterState();
   const path = router.location.pathname;
   const [now, mounted] = useMountedNow();

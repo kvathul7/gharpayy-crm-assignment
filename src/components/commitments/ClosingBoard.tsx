@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Link } from "@tanstack/react-router";
-import { useBookingFlow } from "@/bookingflow/store";
 import { useHydrated } from "@/bookingflow/useHydrated";
 import { health } from "@/bookingflow/engine";
 import { CloseCommitButton } from "@/components/commitments/CloseCommitButton";
@@ -23,6 +22,11 @@ import {
 } from "@/lib/commitments/store";
 import { atRisk, boardDigest, groupByUrgency, ownersOf, riskFlags } from "@/lib/commitments/insights";
 import { NotClosedDialog } from "./NotClosedDialog";
+import { useClosingBackend } from "@/lib/crm/useClosingBackend";
+import { BackendBadge } from "@/components/common/BackendBadge";
+import { CustomerTrail } from "@/components/common/CustomerTrail";
+import { useBookingFlow } from "@/bookingflow/store";
+import { canonicalCustomerId } from "@/lib/canonical/customer-id";
 
 type Bucket = "today" | "overdue" | "open" | "settled";
 
@@ -40,6 +44,8 @@ function countdown(h: number) {
 /** The Closing Board — every promise the team made, and whether it survived contact with reality. */
 export function ClosingBoard() {
   const all = useCommitments();
+  // Customers and promises both go to the hosted backend from here.
+  const backend = useClosingBackend();
   const [bucket, setBucket] = useState<Bucket>("today");
   const [query, setQuery] = useState("");
   const [owner, setOwner] = useState<string>("all");
@@ -146,6 +152,7 @@ export function ClosingBoard() {
               {label}
             </Button>
           ))}
+          <BackendBadge state={backend} className="ml-1 mr-1" />
           <Button size="sm" variant="outline" className="h-7 gap-1 text-[11px]" onClick={copyDigest}>
             <Copy className="h-3 w-3" /> Copy today's list
           </Button>
@@ -301,6 +308,12 @@ function Row({ c, now }: { c: CloseCommitment; now: number }) {
   const overdue = isExpired(c, now);
   const flags = riskFlags(c, now);
   const [showHistory, setShowHistory] = useState(false);
+  // The trail lives against the canonical customer, not the local lead id.
+  const serverCustomerId = useBookingFlow((s) => {
+    const lead = s.leads.find((l) => l.id === c.leadId || l.canonicalId === c.leadId);
+    if (lead) return lead.canonicalId || canonicalCustomerId({ phone: lead.phone, name: lead.name }) || null;
+    return canonicalCustomerId({ phone: c.leadPhone, name: c.leadName }) || null;
+  });
 
   const pushTo = (windowId: "3h" | "24h" | "48h") => {
     promiseClose({
@@ -388,6 +401,7 @@ function Row({ c, now }: { c: CloseCommitment; now: number }) {
               {(e.reason || e.note) && ` · ${e.reason ?? e.note}`}
             </p>
           ))}
+          <CustomerTrail customerId={serverCustomerId} className="mt-2 border-t border-border pt-2" />
         </div>
       )}
     </Card>
