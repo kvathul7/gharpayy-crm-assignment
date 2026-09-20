@@ -9,7 +9,7 @@
 // the dialog and commits, instead of re-deciding what the stage already says.
 // Everything stays editable — this changes the starting point, not the rules.
 
-import { WINDOW_BY_ID, type CloseWindowId } from "./windows";
+import { CLOSE_STEPS, type CloseWindowId } from "./windows";
 
 export interface PromiseSuggestion {
   windowId: CloseWindowId;
@@ -41,22 +41,40 @@ export function suggestPromise(stage: string | undefined, now = new Date()): Pro
 
   // Money is already in motion — hours, not days.
   if (s === "PAYMENT" || s === "RESERVED") {
-    return { windowId: "3h", timeOfDay: time, steps: stepsFor("3h"), because: "payment is already in motion" };
+    return { windowId: "3h", timeOfDay: time, steps: stepFor(s), because: "payment is already in motion" };
   }
   // A decision is live: quote sent, negotiating, booking being raised.
   if (s === "QUOTE" || s === "NEGOTIATE" || s === "BOOKING" || s === "APPROVAL") {
-    return { windowId: "24h", timeOfDay: time, steps: stepsFor("24h"), because: "a decision is already on the table" };
+    return { windowId: "24h", timeOfDay: time, steps: stepFor(s), because: "a decision is already on the table" };
   }
   // Post-tour: the customer has seen the place, momentum is short-lived.
   if (s.startsWith("TOUR_") || s === "CHECKIN_PREP") {
-    return { windowId: "24h", timeOfDay: time, steps: stepsFor("24h"), because: "post-tour momentum fades fast" };
+    return { windowId: "24h", timeOfDay: time, steps: stepFor(s), because: "post-tour momentum fades fast" };
   }
   // Everything earlier keeps the original default.
-  return { windowId: "48h", timeOfDay: time, steps: stepsFor("48h"), because: "still early in the journey" };
+  return { windowId: "48h", timeOfDay: time, steps: stepFor(s), because: "still early in the journey" };
 }
 
-/** The window's own first recommended move — a real option, never invented. */
-function stepsFor(windowId: CloseWindowId): string[] {
-  const first = WINDOW_BY_ID[windowId]?.howToExecute?.[0];
-  return first ? [first] : [];
+/**
+ * The obvious first move for where this customer stands.
+ *
+ * Picked from CLOSE_STEPS, which are actions ("Send the payment link").
+ * An earlier version pulled from the window's howToExecute list, but that
+ * is coaching prose — it pre-ticked a step reading "Name the one remaining
+ * step in the note: 'second visit Saturday 11am' beats 'following up'",
+ * which is advice, not something an operator can tick off as done.
+ *
+ * Returns [] when nothing is clearly right, rather than guessing.
+ */
+function stepFor(stage: string): string[] {
+  const pick = (needle: string) => CLOSE_STEPS.find((s) => s.toLowerCase().includes(needle));
+  const step =
+    stage === "PAYMENT" || stage === "RESERVED"
+      ? pick("payment link")
+      : stage === "BOOKING" || stage === "APPROVAL"
+        ? pick("room hold")
+        : stage === "CHECKIN_PREP"
+          ? pick("agreement")
+          : pick("call the customer");
+  return step ? [step] : [];
 }
