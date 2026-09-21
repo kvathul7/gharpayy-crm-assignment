@@ -16,6 +16,7 @@ const URL_ = env("SUPABASE_URL");
 const KEY = env("SUPABASE_PUBLISHABLE_KEY");
 
 const H = { apikey: KEY, "Content-Type": "application/json" };
+const PROBE_ID = "probe:verify-only";
 let pass = 0;
 let fail = 0;
 
@@ -63,8 +64,12 @@ function serverIdFor(localId: string): string {
 async function main() {
   console.log(`verifying against ${URL_}\n`);
 
-  // Pick a real seeded customer to hang test rows off.
-  const pick = await fetch(`${URL_}/rest/v1/crm_customers?select=id,name,stage&limit=1`, { headers: H });
+  // Use a dedicated probe customer, never a real seeded one.
+  // An earlier version picked the first real row and overwrote its phone and
+  // stage, which silently corrupted demo data: the stored phone no longer
+  // matched the canonical id derived from it.
+  await req("POST", "crm_customers", [{ id: PROBE_ID, name: "__verify probe__", phone: "+910000000001" }], "resolution=merge-duplicates");
+  const pick = await fetch(`${URL_}/rest/v1/crm_customers?select=id,name,stage&id=eq.${PROBE_ID}`, { headers: H });
   const [customer] = (await pick.json()) as { id: string; name: string; stage: string }[];
   if (!customer) {
     console.error("no seeded customers found — run scripts/seed-backend.ts first");
@@ -151,6 +156,7 @@ async function main() {
   const d1 = await req("DELETE", `crm_commitments?source=eq.verify`);
   const d2 = await req("DELETE", `crm_events?detail=eq.verify-script`);
   const d3 = await req("DELETE", `crm_work_claims?customer_id=eq.${customer.id}`);
+  await req("DELETE", `crm_customers?id=eq.${PROBE_ID}`);
   check("test rows removed", d1.ok && d2.ok && d3.ok);
 
   console.log(`\n${pass} passed, ${fail} failed`);
